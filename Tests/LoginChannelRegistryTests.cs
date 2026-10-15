@@ -16,12 +16,17 @@ namespace GameFrameX.Login.Tests
             public event System.EventHandler<LoginEventArgs> OnLoginSuccess;
             public event System.EventHandler<LoginEventArgs> OnLoginFailed;
 
+            public int InitCallCount;
             public int LoginCallCount;
+            public int LogoutCallCount;
 
-            public void Init() { }
+            public void Init() { InitCallCount++; }
             public virtual bool IsReady() { return true; }
             public void Login(LoginParams loginParams) { LoginCallCount++; }
-            public void Logout() { }
+            public void Logout() { LogoutCallCount++; }
+
+            public void RaiseSuccess(LoginEventArgs e) { OnLoginSuccess?.Invoke(this, e); }
+            public void RaiseFailed(LoginEventArgs e) { OnLoginFailed?.Invoke(this, e); }
         }
 
         private sealed class OtherLoginManager : StubLoginManager
@@ -123,61 +128,57 @@ namespace GameFrameX.Login.Tests
         }
 
         [Test]
-        public void ResolveManager_EmptyChannel_ReturnsDefaultManager()
+        public void ResolveManager_NoRegistrations_ReturnsNull()
         {
-            var defaultManager = new StubLoginManager();
-            var resolved = LoginChannelRegistry.ResolveManager(defaultManager, null);
+            Assert.IsNull(LoginChannelRegistry.ResolveManager());
+            Assert.IsNull(LoginChannelRegistry.ResolveManager(null));
+            Assert.IsNull(LoginChannelRegistry.ResolveManager(string.Empty));
+        }
 
-            Assert.AreSame(defaultManager, resolved);
+        [Test]
+        public void ResolveManager_EmptyChannel_ResolvesFirstRegistered()
+        {
+            LoginChannelRegistry.Register(new LoginChannelRegistration("first", "第一渠道", () => new StubLoginManager()));
+            LoginChannelRegistry.Register(new LoginChannelRegistration("second", "第二渠道", () => new OtherLoginManager()));
 
-            Assert.AreSame(defaultManager, LoginChannelRegistry.ResolveManager(defaultManager, ""));
+            var resolved = LoginChannelRegistry.ResolveManager();
+            var resolvedAgain = LoginChannelRegistry.ResolveManager(null);
+
+            Assert.IsInstanceOf<StubLoginManager>(resolved, "无显式渠道标识时按注册顺序取首个");
+            Assert.AreSame(resolved, resolvedAgain, "解析结果懒实例化并缓存");
         }
 
         [Test]
         public void ResolveManager_RegisteredChannel_ReturnsChannelManager()
         {
-            var defaultManager = new StubLoginManager();
             LoginChannelRegistry.Register(new LoginChannelRegistration("other", "其他渠道", () => new OtherLoginManager()));
 
-            var resolved = LoginChannelRegistry.ResolveManager(defaultManager, "other");
+            var resolved = LoginChannelRegistry.ResolveManager("other");
 
             Assert.IsInstanceOf<OtherLoginManager>(resolved);
-            Assert.AreNotSame(defaultManager, resolved);
-        }
-
-        [Test]
-        public void ResolveManager_ChannelSameTypeAsDefault_ReturnsDefaultInstance()
-        {
-            var defaultManager = new StubLoginManager();
-            LoginChannelRegistry.Register(new LoginChannelRegistration("stub", "存根渠道", () => new StubLoginManager()));
-
-            var resolved = LoginChannelRegistry.ResolveManager(defaultManager, "stub");
-
-            Assert.AreSame(defaultManager, resolved, "路由结果与平台默认管理器同类型时应复用默认实例，避免双实例");
         }
 
         [Test]
         public void ResolveManager_UnknownChannel_ReturnsNull()
         {
-            var resolved = LoginChannelRegistry.ResolveManager(new StubLoginManager(), "not-exists");
-            Assert.IsNull(resolved);
+            Assert.IsNull(LoginChannelRegistry.ResolveManager("not-exists"));
         }
 
         [Test]
-        public void LoginParams_ChannelId_RoutesAndEmptyFallsBackToDefault()
+        public void LoginParams_ChannelId_RoutesAndEmptyResolvesFirstRegistered()
         {
-            var defaultManager = new StubLoginManager();
+            LoginChannelRegistry.Register(new LoginChannelRegistration("first", "第一渠道", () => new StubLoginManager()));
             LoginChannelRegistry.Register(new LoginChannelRegistration("other", "其他渠道", () => new OtherLoginManager()));
 
             var routedParams = new LoginParams("other");
-            var resolved = LoginChannelRegistry.ResolveManager(defaultManager, routedParams.ChannelId);
-            Assert.IsInstanceOf<OtherLoginManager>(resolved);
+            Assert.IsInstanceOf<OtherLoginManager>(LoginChannelRegistry.ResolveManager(routedParams.ChannelId));
 
             var defaultParams = new LoginParams();
             Assert.IsNull(defaultParams.ChannelId, "默认构造的 LoginParams 不携带渠道标识");
             Assert.IsNull(defaultParams.Extra);
-            Assert.AreSame(defaultManager, LoginChannelRegistry.ResolveManager(defaultManager, defaultParams.ChannelId));
+            Assert.IsInstanceOf<StubLoginManager>(LoginChannelRegistry.ResolveManager(defaultParams.ChannelId));
         }
+
 
         [Test]
         public void LoginParams_Extra_IsCarriedThrough()
@@ -214,11 +215,60 @@ namespace GameFrameX.Login.Tests
         }
 
         [Test]
-        public void DefaultLoginManager_IsStub()
+        public void DefaultLoginManager_NoChannel_IsNotReadyAndLoginNoOps()
         {
             var manager = new DefaultLoginManager();
+
             Assert.IsFalse(manager.IsReady());
+            Assert.DoesNotThrow(() => manager.Login(new LoginParams()));
             Assert.IsInstanceOf<ILoginManager>(manager);
+        }
+
+        [Test]
+        public void DefaultLoginManager_ForwardsToRegisteredChannel()
+        {
+            var stub = new StubLoginManager();
+            LoginChannelRegistry.Register(new LoginChannelRegistration("stub", "存根渠道", () => stub));
+
+            var manager = new DefaultLoginManager();
+            manager.Init();
+            var isReady = manager.IsReady();
+            manager.Logout();
+
+            Assert.IsTrue(isReady);
+            Assert.AreEqual(1, stub.InitCallCount);
+            Assert.AreEqual(1, stub.LogoutCallCount);
+        }
+
+        [Test]
+        public void DefaultLoginManager_LoginEmptyChannel_ForwardsAndRelaysEvents()
+        {
+            var stub = new StubLoginManager();
+            LoginChannelRegistry.Register(new LoginChannelRegistration("stub", "存根渠道", () => stub));
+
+            var manager = new DefaultLoginManager();
+            var raised = new System.Collections.Generic.List<LoginEventArgs>();
+            manager.OnLoginSuccess += (sender, e) => raised.Add(e);
+
+            manager.Login(new LoginParams());
+            Assert.AreEqual(1, stub.LoginCallCount, "空 ChannelId 经互斥解析转发到注册渠道");
+
+            stub.RaiseSuccess(new LoginEventArgs { ChannelId = "stub" });
+            Assert.AreEqual(1, raised.Count, "渠道结果事件经模块默认实现聚合转发");
+        }
+
+        [Test]
+        public void DefaultLoginManager_LoginExplicitChannel_RoutesToChannel()
+        {
+            var stub = new StubLoginManager();
+            var other = new OtherLoginManager();
+            LoginChannelRegistry.Register(new LoginChannelRegistration("stub", "存根渠道", () => stub));
+            LoginChannelRegistry.Register(new LoginChannelRegistration("other", "其他渠道", () => other));
+
+            new DefaultLoginManager().Login(new LoginParams("other"));
+
+            Assert.AreEqual(0, stub.LoginCallCount);
+            Assert.AreEqual(1, other.LoginCallCount);
         }
 
         [Test]

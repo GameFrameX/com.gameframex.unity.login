@@ -15,8 +15,12 @@ namespace GameFrameX.Login.Runtime
     /// </summary>
     /// <remarks>
     /// 渠道包通过自身的 Bootstrap（RuntimeInitializeOnLoadMethod）在启动时显式注册，未被引用的渠道包代码会被裁剪，天然满足"引用即注册"。
+    /// 互斥解析语义：同一时刻只解析出一个渠道管理器——无显式渠道标识时按注册顺序取首个（渠道平台互斥由渠道包 Bootstrap 的宏墙保证），
+    /// 这与支付域 <c>PaymentChannelRegistry</c> 的"一笔单 → 一个渠道"参数路由、统计域 <c>GameAnalyticsRegistry</c> 的事件广播（fan-out 到全部渠道）语义均不同。
+    /// 显式路由覆盖：<see cref="ResolveManager"/> 携带渠道标识时按注册表路由到指定渠道（未注册返回 null）。
     /// 注册表在 SubsystemRegistration 阶段自动清空（早于各渠道的 BeforeSceneLoad 注册），关闭 Domain Reload 时不会产生重复注册。
-    /// 注意：经注册表实例化的渠道管理器不参与 GameFrameworkEntry 的模块 Update/Shutdown 生命周期，仅适合回调驱动的渠道。
+    /// 注册表实例化的渠道管理器不参与 GameFrameworkEntry 的模块 Update/Shutdown 生命周期；
+    /// 模块槽位由主包默认实现 <see cref="DefaultLoginManager"/> 占据，并把调用转发给注册表解析结果（含 Shutdown 转发）。
     /// </remarks>
     [UnityEngine.Scripting.Preserve]
     public static class LoginChannelRegistry
@@ -123,35 +127,34 @@ namespace GameFrameX.Login.Runtime
         }
 
         /// <summary>
-        /// 解析登录参数对应的渠道管理器
+        /// 解析当前使用的登录渠道管理器
         /// </summary>
         /// <remarks>
-        /// 路由规则：参数携带 ChannelId 时按注册表路由（未注册返回null）；未携带时回落到平台默认管理器；
-        /// 路由结果与平台默认管理器同类型时返回平台默认实例，避免同渠道双实例。
+        /// 互斥解析：未指定渠道标识时按注册顺序取首个注册渠道（注册顺序即优先级；渠道平台互斥由渠道包 Bootstrap 的宏墙保证），
+        /// 多渠道并存且未显式指定时输出告警；显式渠道标识时按注册表路由到指定渠道（未注册返回 null）。
+        /// 解析结果懒实例化并缓存，重复调用返回同一实例。
         /// </remarks>
-        /// <param name="defaultManager">平台默认登录管理器</param>
-        /// <param name="channelId">登录参数携带的渠道标识，可为空</param>
-        /// <returns>渠道管理器；无法路由返回null</returns>
+        /// <param name="channelId">渠道唯一标识，为空时走互斥解析</param>
+        /// <returns>渠道管理器；无可用渠道或未注册返回null</returns>
         [UnityEngine.Scripting.Preserve]
-        public static ILoginManager ResolveManager(ILoginManager defaultManager, string channelId)
+        public static ILoginManager ResolveManager(string channelId = null)
         {
-            if (string.IsNullOrEmpty(channelId))
+            if (!string.IsNullOrEmpty(channelId))
             {
-                return defaultManager;
+                return GetManager(channelId);
             }
 
-            var manager = GetManager(channelId);
-            if (manager == null)
+            foreach (var registration in Registrations.Values)
             {
-                return null;
+                if (Registrations.Count > 1)
+                {
+                    Log.Warning("Login has {0} registered channels but no explicit channel id given. Resolving by registration priority: '{1}'.", Registrations.Count, registration.ChannelId);
+                }
+
+                return GetManager(registration.ChannelId);
             }
 
-            if (defaultManager != null && manager.GetType() == defaultManager.GetType())
-            {
-                return defaultManager;
-            }
-
-            return manager;
+            return null;
         }
     }
 }

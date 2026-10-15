@@ -15,8 +15,9 @@ namespace GameFrameX.Login.Runtime
     /// 登录组件（login 域唯一门面，取代 per-provider 登录组件）
     /// </summary>
     /// <remarks>
-    /// 平台默认管理器以类型名字符串序列化（核心包不引用任何渠道程序集）；渠道包经 Bootstrap 自注册进
-    /// <see cref="LoginChannelRegistry"/>，<see cref="Login(LoginParams)"/> 按 ChannelId 显式路由，为空回落平台默认渠道。
+    /// 渠道发现与解析：模块槽位注册为主包默认实现 <see cref="DefaultLoginManager"/>（渠道实现不再各自直接占用模块槽位），
+    /// 实际的渠道管理器由 <see cref="LoginChannelRegistry"/> 在调用期互斥解析（渠道包经 Bootstrap 自注册，引用即注册；
+    /// 渠道平台互斥由渠道包 Bootstrap 的宏墙保证），不再依赖 Inspector 序列化的实现类型全名字符串反射发现。
     /// 新增登录渠道 = 新渠道包 + Bootstrap 自注册，entry 包不再需要修改。
     /// </remarks>
     [DisallowMultipleComponent]
@@ -27,20 +28,14 @@ namespace GameFrameX.Login.Runtime
     public class LoginComponent : GameFrameworkComponent
     {
         private ILoginManager _loginManager;
-        private readonly HashSet<ILoginManager> _wiredManagers = new HashSet<ILoginManager>();
-        [SerializeField] private string m_componentAndroidType = "GameFrameX.Login.Google.Runtime.GoogleLoginManager";
-        [SerializeField] private string m_componentIOSType = "GameFrameX.Login.Google.Runtime.GoogleLoginManager";
-        [SerializeField] private string m_componentWebGLType = "GameFrameX.Login.Runtime.DefaultLoginManager";
-        [SerializeField] private string m_componentPCType = "GameFrameX.Login.Runtime.DefaultLoginManager";
-        [SerializeField] private string m_componentMacType = "GameFrameX.Login.Runtime.DefaultLoginManager";
 
         /// <summary>
-        /// 登录成功事件（平台默认渠道与路由渠道的结果均会触发）
+        /// 登录成功事件（互斥解析的默认渠道与路由渠道的结果均会触发）
         /// </summary>
         public event EventHandler<LoginEventArgs> OnLoginSuccess;
 
         /// <summary>
-        /// 登录失败事件（平台默认渠道与路由渠道的结果均会触发）
+        /// 登录失败事件（互斥解析的默认渠道与路由渠道的结果均会触发）
         /// </summary>
         public event EventHandler<LoginEventArgs> OnLoginFailed;
 
@@ -49,27 +44,7 @@ namespace GameFrameX.Login.Runtime
         /// </summary>
         protected override void Awake()
         {
-#if UNITY_ANDROID
-            componentType = m_componentAndroidType;
-#elif UNITY_IOS
-            componentType = m_componentIOSType;
-#elif UNITY_WEBGL
-            componentType = m_componentWebGLType;
-#elif UNITY_STANDALONE_WIN || UNITY_STANDALONE_LINUX
-            componentType = m_componentPCType;
-#elif UNITY_STANDALONE_OSX
-            componentType = m_componentMacType;
-#else
-            componentType = typeof(DefaultLoginManager).FullName;
-#endif
-            ImplementationComponentType = Utility.Assembly.GetType(componentType);
-            if (ImplementationComponentType == null)
-            {
-                // 平台默认渠道包缺失（类型名字符串解析不到实现）时回落兜底实现，组件不因此禁用
-                componentType = typeof(DefaultLoginManager).FullName;
-                ImplementationComponentType = typeof(DefaultLoginManager);
-            }
-
+            ImplementationComponentType = typeof(DefaultLoginManager);
             InterfaceComponentType = typeof(ILoginManager);
             base.Awake();
 
@@ -80,21 +55,8 @@ namespace GameFrameX.Login.Runtime
                 return;
             }
 
-            WireManagerEvents(_loginManager);
-        }
-
-        /// <summary>
-        /// 为登录管理器接线路由结果事件（同一管理器只接线一次）
-        /// </summary>
-        private void WireManagerEvents(ILoginManager manager)
-        {
-            if (manager == null || !_wiredManagers.Add(manager))
-            {
-                return;
-            }
-
-            manager.OnLoginSuccess += (sender, e) => OnLoginSuccess?.Invoke(this, e);
-            manager.OnLoginFailed += (sender, e) => OnLoginFailed?.Invoke(this, e);
+            _loginManager.OnLoginSuccess += (sender, e) => OnLoginSuccess?.Invoke(this, e);
+            _loginManager.OnLoginFailed += (sender, e) => OnLoginFailed?.Invoke(this, e);
         }
 
         /// <summary>
@@ -120,7 +82,7 @@ namespace GameFrameX.Login.Runtime
         }
 
         /// <summary>
-        /// 初始化平台默认登录渠道
+        /// 初始化登录渠道（转发给注册表互斥解析到的渠道）
         /// </summary>
         [UnityEngine.Scripting.Preserve]
         public void Init()
@@ -129,7 +91,7 @@ namespace GameFrameX.Login.Runtime
         }
 
         /// <summary>
-        /// 平台默认登录渠道是否准备好
+        /// 登录渠道是否准备好（转发给注册表互斥解析到的渠道）
         /// </summary>
         /// <returns>准备好返回true，否则返回false</returns>
         [UnityEngine.Scripting.Preserve]
@@ -141,7 +103,7 @@ namespace GameFrameX.Login.Runtime
         /// <summary>
         /// 执行登录（推荐使用）
         /// </summary>
-        /// <param name="loginParams">登录参数；ChannelId 为空回落平台默认渠道，非空按注册表路由（未注册告警 no-op）</param>
+        /// <param name="loginParams">登录参数；ChannelId 为空走注册表互斥解析（注册顺序即优先级），非空按注册表路由（未注册告警 no-op）</param>
         [UnityEngine.Scripting.Preserve]
         public void Login(LoginParams loginParams)
         {
@@ -151,19 +113,11 @@ namespace GameFrameX.Login.Runtime
                 return;
             }
 
-            var manager = LoginChannelRegistry.ResolveManager(_loginManager, loginParams.ChannelId);
-            if (manager == null)
-            {
-                Log.Warning("Login channel '{0}' is not registered.", loginParams.ChannelId);
-                return;
-            }
-
-            WireManagerEvents(manager);
-            manager.Login(loginParams);
+            _loginManager.Login(loginParams);
         }
 
         /// <summary>
-        /// 执行平台默认渠道登录（一次性回调便捷重载，内部订阅即弃）
+        /// 执行默认渠道登录（一次性回调便捷重载，内部订阅即弃）
         /// </summary>
         /// <param name="onSuccess">登录成功回调，携带渠道无关登录结果</param>
         /// <param name="onFailed">登录失败回调，携带错误消息</param>
@@ -198,7 +152,7 @@ namespace GameFrameX.Login.Runtime
         }
 
         /// <summary>
-        /// 退出平台默认渠道登录
+        /// 退出登录（转发给注册表互斥解析到的渠道）
         /// </summary>
         [UnityEngine.Scripting.Preserve]
         public void Logout()
