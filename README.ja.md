@@ -29,8 +29,8 @@
 
 - チャネル非依存のログイン契約：`Init()` / `IsReady()` / `Login(LoginParams)` / `Logout()` + 集約された `OnLoginSuccess` / `OnLoginFailed` イベント
 - 統一結果基底クラス `LoginResult`：`ChannelId` / `OpenId` / `Token`（チャネル資格情報を統一的に保持：Google IdToken、Apple credential、WeChat/QQ code または accessToken）/ `DisplayName` / `PhotoUrl` / `Raw`。チャネルサブクラスはチャネル固有のフィールドのみ追加
-- 明示的チャネルルーティング：`LoginParams.ChannelId` でレジストリ経由のルーティング。空の場合はプラットフォーム既定のマネージャーへフォールバック（シリアライズされた型名文字列、欠落時は `DefaultLoginManager`）
-- チャネルレジストリ：Register 冪等（先着優先 + 警告）、ファクトリの遅延インスタンス化とキャッシュ、`SubsystemRegistration` での `Reset`、同一タイプのルーティング結果は既定インスタンスを再利用（二重インスタンス防止）
+- 明示的チャネルルーティング：`LoginParams.ChannelId` でレジストリ経由のルーティング。空の場合はレジストリの排他解決（先着登録チャネル優先、登録順が優先度）。モジュールスロットは中核パッケージの `DefaultLoginManager` フォワーダーが占めます
+- チャネルレジストリ：Register 冪等（先着優先 + 警告）、ファクトリの遅延インスタンス化とキャッシュ、`SubsystemRegistration` での `Reset`、先着登録チャネルを取る排他解決（チャネルのプラットフォーム除外は各チャネル Bootstrap のマクロ壁で保証）
 - UI 向けチャネル列挙：`GetAvailableChannels()` がチャネル ID / 表示名 / 可用性を返す
 - 一回限りのコールバック簡易オーバーロード `Login(onSuccess, onFailed)`（購読即破棄）
 
@@ -83,7 +83,7 @@ public class LoginDemo : MonoBehaviour
         //    var login = GameApp.Login;
         var login = GameEntry.GetComponent<LoginComponent>();
 
-        // 集約イベントの購読（プラットフォーム既定チャネルとルーティングチャネルの結果がどちらも発火）
+        // 集約イベントの購読（排他解決の既定チャネルとルーティングチャネルの結果がどちらも発火）
         login.OnLoginSuccess += (sender, e) =>
         {
             // チャネル非依存：サーバー検証は e.Result.Token を使用
@@ -91,7 +91,7 @@ public class LoginDemo : MonoBehaviour
         };
         login.OnLoginFailed += (sender, e) => Debug.LogWarning($"ログイン失敗 channel={e.ChannelId} error={e.ErrorMessage}");
 
-        // 2) プラットフォーム既定チャネルの初期化（チャネル設定はチャネルパッケージが自読）
+        // 2) 既定チャネルの初期化（排他解決。チャネル設定はチャネルパッケージが自読）
         login.Init();
 
         // 3a) 一回限りのコールバックオーバーロード（購読即破棄）
@@ -99,8 +99,8 @@ public class LoginDemo : MonoBehaviour
             result => Debug.Log($"ログイン成功 token={result.Token}"),
             error => Debug.LogWarning($"ログイン失敗: {error}"));
 
-        // 3b) 明示的ルーティング：ChannelId 空ならプラットフォーム既定、"Google" ならレジストリルーティング
-        login.Login(new LoginParams());                    // プラットフォーム既定チャネル
+        // 3b) 明示的ルーティング：ChannelId 空なら排他解決の既定、"Google" ならレジストリルーティング
+        login.Login(new LoginParams());                    // 既定チャネル（排他解決）
         login.Login(new LoginParams("Google"));            // 明示的チャネルルーティング
 
         // 4) 利用可能なチャネルの列挙（ログイン UI での並列表示）
@@ -116,23 +116,23 @@ public class LoginDemo : MonoBehaviour
 
 ### `Init()`
 
-プラットフォーム既定のログインチャネルを初期化します。チャネル設定はチャネルパッケージが自読します。
+ログインチャネルを初期化します（レジストリから解決されたマネージャーへ転送）。チャネル設定はチャネルパッケージが自読します。
 
 ### `IsReady()`
 
-プラットフォーム既定のログインチャネルが準備済みかどうか。
+ログインチャネルが準備済みかどうか（レジストリから解決されたマネージャーへ転送）。
 
 ### `Login(LoginParams loginParams)`
 
-ログインを実行します。`ChannelId` が空ならプラットフォーム既定マネージャーへ、非空なら `LoginChannelRegistry` 経由でルーティング（未登録チャネルは警告して no-op）。結果は集約された `OnLoginSuccess` / `OnLoginFailed` イベントで発火します。
+ログインを実行します。`ChannelId` が空ならレジストリの排他解決（登録順が優先度）。非空なら `LoginChannelRegistry` 経由でルーティング（未登録チャネルは警告して no-op）。結果は集約された `OnLoginSuccess` / `OnLoginFailed` イベントで発火します。
 
 ### `Login(Action<LoginResult> onSuccess, Action<string> onFailed)`
 
-プラットフォーム既定チャネル向けの一回限りコールバック簡易オーバーロード（購読即破棄）。
+既定チャネル向けの一回限りコールバック簡易オーバーロード（購読即破棄）。
 
 ### `Logout()`
 
-プラットフォーム既定チャネルからログアウトします。
+ログアウトします（レジストリから解決されたマネージャーへ転送）。
 
 ### `GetAvailableChannels()`
 
@@ -150,8 +150,8 @@ public class LoginDemo : MonoBehaviour
 
 ### チャネルレジストリトポロジ（v1.0.0）
 
-- 中核パッケージ `com.gameframex.unity.login`（本パッケージ）：契約（`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`）+ レジストリ（`LoginChannelRegistry`）+ 唯一の `LoginComponent` ファサードと `DefaultLoginManager` フォールバック。
-- チャネルパッケージ（例：`com.gameframex.unity.login.google`）：`BaseLoginManager` を実装し、各自の Bootstrap で `BeforeSceneLoad` に自己登録。package.json は中核パッケージのみに依存。未導入のチャネルパッケージのコードはストリップされ、登録は発生しません。
+- 中核パッケージ `com.gameframex.unity.login`（本パッケージ）：契約（`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`）+ レジストリ（`LoginChannelRegistry`）+ 唯一の `LoginComponent` ファサード。モジュールスロットは中核パッケージの `DefaultLoginManager` が占め、呼び出し（Shutdown 含む）と結果イベントをレジストリ解決されたチャネルへ転送します。
+- チャネルパッケージ（例：`com.gameframex.unity.login.google`）：`BaseLoginManager` を実装し、各自の Bootstrap で `BeforeSceneLoad` に自己登録（マクロ壁が対応プラットフォームを限定）。package.json は中核パッケージのみに依存。未導入のチャネルパッケージのコードはストリップされ、登録は発生しません。
 - 新しいログインチャネルの追加 = 新しいチャネルパッケージ + Bootstrap 自己登録。entry パッケージは永久に単一の `GameApp.Login` アクセサのみ保持します。
 
 ### チャネル対応表
@@ -165,7 +165,7 @@ public class LoginDemo : MonoBehaviour
 
 | 旧 | 新 |
 |----|----|
-| `GoogleLoginComponent`（シーンコンポーネント + Inspector） | `LoginComponent`（唯一のファサード。Google は Android / iOS プラットフォーム既定） |
+| `GoogleLoginComponent`（シーンコンポーネント + Inspector） | `LoginComponent`（唯一のファサード。Google はマクロ壁経由で Android / iOS の既定チャネルとして登録） |
 | `GameApp.GoogleLogin` | `GameApp.Login`（定義 `ENABLE_GAME_FRAME_X_GOOGLE_LOGIN` -> `ENABLE_GAME_FRAME_X_LOGIN`） |
 | `IGoogleLoginManager` | `ILoginManager` / `BaseLoginManager` |
 | `GoogleLoginSuccess`（`IdToken` 含む） | `GoogleLoginResult : LoginResult`（IdToken は `Token` に統合） |
@@ -178,7 +178,7 @@ public class LoginDemo : MonoBehaviour
 | Android | 対応（チャネルパッケージ） |
 | iOS | 対応（チャネルパッケージ） |
 | Editor | 対応（チャネルパッケージのスタブ） |
-| WebGL / PC / macOS | フォールバック（`DefaultLoginManager`） |
+| WebGL / PC / macOS | 登録チャネルなし：警告して no-op（`DefaultLoginManager` は解決できるチャネルがない） |
 
 ## ドキュメントとリソース
 

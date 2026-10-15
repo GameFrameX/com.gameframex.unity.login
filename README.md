@@ -29,8 +29,8 @@ All-in-One Solution for Indie Game Development · Empowering Indie Developers' D
 
 - Channel-agnostic login contract: `Init()` / `IsReady()` / `Login(LoginParams)` / `Logout()` plus aggregated `OnLoginSuccess` / `OnLoginFailed` events
 - Unified result base class `LoginResult`: `ChannelId` / `OpenId` / `Token` (carries the channel credential: Google IdToken, Apple credential, WeChat/QQ code or accessToken) / `DisplayName` / `PhotoUrl` / `Raw`; channel subclasses only add channel-specific fields
-- Explicit channel routing: `LoginParams.ChannelId` routes through the registry; empty falls back to the platform default manager (serialized type-name string; missing falls back to `DefaultLoginManager`)
-- Channel registry: idempotent Register (first wins + warning), lazy factory instantiation with caching, `Reset` on `SubsystemRegistration`, same-type routing reuses the default instance (no double instances)
+- Explicit channel routing: `LoginParams.ChannelId` routes through the registry; empty resolves via mutual-exclusion (first registered channel wins), with the module slot occupied by the core-package `DefaultLoginManager` forwarder
+- Channel registry: idempotent Register (first wins + warning), lazy factory instantiation with caching, `Reset` on `SubsystemRegistration`, mutual-exclusion resolution taking the first registered channel (channel platform exclusion guaranteed by the macro wall in each channel Bootstrap)
 - Channel enumeration for UI: `GetAvailableChannels()` returns channel id / display name / availability
 - One-shot callback convenience overload `Login(onSuccess, onFailed)` (subscribe-and-dispose)
 
@@ -83,7 +83,7 @@ public class LoginDemo : MonoBehaviour
         //    var login = GameApp.Login;
         var login = GameEntry.GetComponent<LoginComponent>();
 
-        // Subscribe to aggregated events (platform default channel and routed channels all fire here)
+        // Subscribe to aggregated events (mutual-exclusion default channel and routed channels all fire here)
         login.OnLoginSuccess += (sender, e) =>
         {
             // Channel-agnostic: server verification should use e.Result.Token
@@ -91,7 +91,7 @@ public class LoginDemo : MonoBehaviour
         };
         login.OnLoginFailed += (sender, e) => Debug.LogWarning($"Login failed channel={e.ChannelId} error={e.ErrorMessage}");
 
-        // 2) Initialize the platform default channel (channel config is read by the channel package itself)
+        // 2) Initialize the default channel (channel config is read by the channel package itself)
         login.Init();
 
         // 3a) One-shot callback overload (subscribe-and-dispose)
@@ -99,8 +99,8 @@ public class LoginDemo : MonoBehaviour
             result => Debug.Log($"Login ok token={result.Token}"),
             error => Debug.LogWarning($"Login failed: {error}"));
 
-        // 3b) Or route explicitly: empty ChannelId -> platform default, "Google" -> registry routing
-        login.Login(new LoginParams());                    // platform default channel
+        // 3b) Or route explicitly: empty ChannelId -> mutual-exclusion default, "Google" -> registry routing
+        login.Login(new LoginParams());                    // default channel (mutual-exclusion)
         login.Login(new LoginParams("Google"));            // explicit channel routing
 
         // 4) Enumerate available channels for the login UI
@@ -116,23 +116,23 @@ public class LoginDemo : MonoBehaviour
 
 ### `Init()`
 
-Initialize the platform default login channel. Channel config is read by the channel package itself.
+Initialize the login channel (forwarded to the manager resolved from the registry). Channel config is read by the channel package itself.
 
 ### `IsReady()`
 
-Whether the platform default login channel is ready.
+Whether the login channel is ready (forwarded to the manager resolved from the registry).
 
 ### `Login(LoginParams loginParams)`
 
-Perform a login. `ChannelId` empty routes to the platform default manager; non-empty routes through `LoginChannelRegistry` (unregistered channels warn and no-op). Results fire the aggregated `OnLoginSuccess` / `OnLoginFailed` events.
+Perform a login. `ChannelId` empty resolves via registry mutual exclusion (registration order is the priority); non-empty routes through the registry (unregistered channels warn and no-op). Results fire the aggregated `OnLoginSuccess` / `OnLoginFailed` events.
 
 ### `Login(Action<LoginResult> onSuccess, Action<string> onFailed)`
 
-One-shot callback convenience overload for the platform default channel (subscribe-and-dispose).
+One-shot callback convenience overload for the default channel (subscribe-and-dispose).
 
 ### `Logout()`
 
-Log out of the platform default channel.
+Log out (forwarded to the manager resolved from the registry).
 
 ### `GetAvailableChannels()`
 
@@ -150,8 +150,8 @@ Channel-agnostic result base class: `ChannelId`, `OpenId`, `Token` (unified chan
 
 ### Channel Registry Topology (v1.0.0)
 
-- Core package `com.gameframex.unity.login` (this package): contract (`ILoginManager`, `LoginResult`, `LoginParams`, `LoginEventArgs`), registry (`LoginChannelRegistry`), and the single `LoginComponent` facade with `DefaultLoginManager` fallback.
-- Channel packages (e.g. `com.gameframex.unity.login.google`): implement `BaseLoginManager`, self-register at `BeforeSceneLoad` via their own Bootstrap, and only depend on the core package. Uninstalled packages are stripped - registration simply does not happen.
+- Core package `com.gameframex.unity.login` (this package): contract (`ILoginManager`, `LoginResult`, `LoginParams`, `LoginEventArgs`), registry (`LoginChannelRegistry`), and the single `LoginComponent` facade; the module slot is occupied by the core-package `DefaultLoginManager`, which forwards calls (incl. Shutdown) and result events to the registry-resolved channel.
+- Channel packages (e.g. `com.gameframex.unity.login.google`): implement `BaseLoginManager`, self-register at `BeforeSceneLoad` via their own Bootstrap (macro wall limits supported platforms), and only depend on the core package. Uninstalled packages are stripped - registration simply does not happen.
 - Adding a new login channel = a new channel package + Bootstrap self-registration. The entry package keeps a single `GameApp.Login` accessor forever.
 
 ### Channel Support
@@ -165,7 +165,7 @@ Channel-agnostic result base class: `ChannelId`, `OpenId`, `Token` (unified chan
 
 | Old | New |
 |-----|-----|
-| `GoogleLoginComponent` (scene component + Inspector) | `LoginComponent` (single facade; Google is the Android / iOS platform default) |
+| `GoogleLoginComponent` (scene component + Inspector) | `LoginComponent` (single facade; Google registers as the default channel on Android / iOS via the macro wall) |
 | `GameApp.GoogleLogin` | `GameApp.Login` (define `ENABLE_GAME_FRAME_X_GOOGLE_LOGIN` -> `ENABLE_GAME_FRAME_X_LOGIN`) |
 | `IGoogleLoginManager` | `ILoginManager` / `BaseLoginManager` |
 | `GoogleLoginSuccess` (incl. `IdToken`) | `GoogleLoginResult : LoginResult` (IdToken carried by `Token`) |
@@ -178,7 +178,7 @@ Channel-agnostic result base class: `ChannelId`, `OpenId`, `Token` (unified chan
 | Android | Yes (channel packages) |
 | iOS | Yes (channel packages) |
 | Editor | Yes (stub sign-in via channel packages) |
-| WebGL / PC / macOS | Fallback (`DefaultLoginManager`) |
+| WebGL / PC / macOS | No registered channel: warn and no-op (`DefaultLoginManager` has no channel to resolve) |
 
 ## Documentation & Resources
 

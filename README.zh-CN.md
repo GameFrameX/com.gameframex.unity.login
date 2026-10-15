@@ -29,8 +29,8 @@
 
 - 渠道无关登录契约：`Init()` / `IsReady()` / `Login(LoginParams)` / `Logout()` + 聚合的 `OnLoginSuccess` / `OnLoginFailed` 事件
 - 统一结果基类 `LoginResult`：`ChannelId` / `OpenId` / `Token`（统一承载渠道令牌：Google IdToken、Apple credential、微信/QQ code 或 accessToken）/ `DisplayName` / `PhotoUrl` / `Raw`；渠道子类只扩展渠道特有字段
-- 显式渠道路由：`LoginParams.ChannelId` 经注册表路由；为空回落平台默认管理器（序列化类型名字符串；缺失回落 `DefaultLoginManager`）
-- 渠道注册表：Register 幂等保首 + 告警、工厂懒实例化缓存、`Reset` 挂 `SubsystemRegistration`、路由结果与默认同类型时复用默认实例（防双实例）
+- 显式渠道路由：`LoginParams.ChannelId` 经注册表路由；为空走注册表互斥解析的默认渠道（注册顺序即优先级），模块槽位由主包 `DefaultLoginManager` 转发占据
+- 渠道注册表：Register 幂等保首 + 告警、工厂懒实例化缓存、`Reset` 挂 `SubsystemRegistration`、互斥解析取首个注册渠道（渠道平台互斥由渠道包 Bootstrap 宏墙保证）
 - UI 渠道枚举：`GetAvailableChannels()` 返回渠道标识 / 展示名 / 可用性
 - 一次性回调便捷重载 `Login(onSuccess, onFailed)`（订阅即弃）
 
@@ -83,7 +83,7 @@ public class LoginDemo : MonoBehaviour
         //    var login = GameApp.Login;
         var login = GameEntry.GetComponent<LoginComponent>();
 
-        // 订阅聚合事件（平台默认渠道与路由渠道的结果都会触发）
+        // 订阅聚合事件（互斥解析的默认渠道与路由渠道的结果都会触发）
         login.OnLoginSuccess += (sender, e) =>
         {
             // 渠道无关：服务器校验方统一使用 e.Result.Token
@@ -91,7 +91,7 @@ public class LoginDemo : MonoBehaviour
         };
         login.OnLoginFailed += (sender, e) => Debug.LogWarning($"登录失败 channel={e.ChannelId} error={e.ErrorMessage}");
 
-        // 2) 初始化平台默认渠道（渠道配置由渠道包自读）
+        // 2) 初始化默认渠道（渠道配置由渠道包自读）
         login.Init();
 
         // 3a) 一次性回调重载（订阅即弃）
@@ -99,8 +99,8 @@ public class LoginDemo : MonoBehaviour
             result => Debug.Log($"登录成功 token={result.Token}"),
             error => Debug.LogWarning($"登录失败: {error}"));
 
-        // 3b) 或显式路由：ChannelId 为空走平台默认，"Google" 走注册表路由
-        login.Login(new LoginParams());                    // 平台默认渠道
+        // 3b) 或显式路由：ChannelId 为空走互斥解析（注册顺序即优先级），"Google" 显式路由
+        login.Login(new LoginParams());                    // 默认渠道（互斥解析）
         login.Login(new LoginParams("Google"));            // 显式渠道路由
 
         // 4) 枚举可用渠道（登录 UI 并列展示）
@@ -116,23 +116,23 @@ public class LoginDemo : MonoBehaviour
 
 ### `Init()`
 
-初始化平台默认登录渠道。渠道配置由渠道包自行读取。
+初始化登录渠道（转发给注册表互斥解析到的渠道管理器）。渠道配置由渠道包自行读取。
 
 ### `IsReady()`
 
-平台默认登录渠道是否准备好。
+登录渠道是否准备好（转发给注册表互斥解析到的渠道管理器）。
 
 ### `Login(LoginParams loginParams)`
 
-执行登录。`ChannelId` 为空路由到平台默认管理器；非空经 `LoginChannelRegistry` 路由（未注册渠道告警 no-op）。结果触发聚合的 `OnLoginSuccess` / `OnLoginFailed` 事件。
+执行登录。`ChannelId` 为空走注册表互斥解析（注册顺序即优先级）；非空按注册表路由（未注册渠道告警 no-op）。结果触发聚合的 `OnLoginSuccess` / `OnLoginFailed` 事件。
 
 ### `Login(Action<LoginResult> onSuccess, Action<string> onFailed)`
 
-平台默认渠道的一次性回调便捷重载（订阅即弃）。
+默认渠道的一次性回调便捷重载（订阅即弃）。
 
 ### `Logout()`
 
-退出平台默认渠道登录。
+退出登录（转发给注册表互斥解析到的渠道管理器）。
 
 ### `GetAvailableChannels()`
 
@@ -150,8 +150,8 @@ public class LoginDemo : MonoBehaviour
 
 ### 渠道注册表拓扑（v1.0.0）
 
-- 核心包 `com.gameframex.unity.login`（本包）：契约（`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`）+ 注册表（`LoginChannelRegistry`）+ 唯一 `LoginComponent` 门面与 `DefaultLoginManager` 兜底。
-- 渠道包（如 `com.gameframex.unity.login.google`）：实现 `BaseLoginManager`，经各自 Bootstrap 在 `BeforeSceneLoad` 自注册，package.json 只依赖核心包。未安装的渠道包代码被裁剪——注册不会发生。
+- 核心包 `com.gameframex.unity.login`（本包）：契约（`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`）+ 注册表（`LoginChannelRegistry`）+ 唯一 `LoginComponent` 门面；模块槽位由主包 `DefaultLoginManager` 占据并把调用（含 Shutdown）与结果事件转发给注册表解析结果。
+- 渠道包（如 `com.gameframex.unity.login.google`）：实现 `BaseLoginManager`，经各自 Bootstrap（宏墙限定支持平台）在 `BeforeSceneLoad` 自注册，package.json 只依赖核心包。未安装的渠道包代码被裁剪——注册不会发生。
 - 新增登录渠道 = 新渠道包 + Bootstrap 自注册；entry 包永久只保留单一 `GameApp.Login` 访问面。
 
 ### 渠道支持表
@@ -165,7 +165,7 @@ public class LoginDemo : MonoBehaviour
 
 | 旧形态 | 新形态 |
 |--------|--------|
-| `GoogleLoginComponent`（场景组件 + Inspector） | `LoginComponent`（唯一门面；Google 为 Android / iOS 平台默认渠道） |
+| `GoogleLoginComponent`（场景组件 + Inspector） | `LoginComponent`（唯一门面；Google 在 Android / iOS 经宏墙注册为默认渠道） |
 | `GameApp.GoogleLogin` | `GameApp.Login`（宏 `ENABLE_GAME_FRAME_X_GOOGLE_LOGIN` → `ENABLE_GAME_FRAME_X_LOGIN`） |
 | `IGoogleLoginManager` | `ILoginManager` / `BaseLoginManager` |
 | `GoogleLoginSuccess`（含 `IdToken`） | `GoogleLoginResult : LoginResult`（IdToken 收敛到 `Token`） |
@@ -178,7 +178,7 @@ public class LoginDemo : MonoBehaviour
 | Android | 支持（渠道包） |
 | iOS | 支持（渠道包） |
 | Editor | 支持（渠道包桩数据） |
-| WebGL / PC / macOS | 兜底（`DefaultLoginManager`） |
+| WebGL / PC / macOS | 无注册渠道时告警 no-op（`DefaultLoginManager` 转发无渠道可解析） |
 
 ## 文档与资源
 

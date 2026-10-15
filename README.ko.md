@@ -29,8 +29,8 @@
 
 - 채널 독립 로그인 계약: `Init()` / `IsReady()` / `Login(LoginParams)` / `Logout()` + 통합된 `OnLoginSuccess` / `OnLoginFailed` 이벤트
 - 통합 결과 기반 클래스 `LoginResult`: `ChannelId` / `OpenId` / `Token`(채널 자격 증명 통합 전달: Google IdToken, Apple credential, WeChat/QQ code 또는 accessToken) / `DisplayName` / `PhotoUrl` / `Raw`. 채널 하위 클래스는 채널 고유 필드만 추가
-- 명시적 채널 라우팅: `LoginParams.ChannelId`로 레지스트리 라우팅. 비어 있으면 플랫폼 기본 관리자로 폴백(직렬화된 타입 이름 문자열, 누락 시 `DefaultLoginManager`)
-- 채널 레지스트리: Register 멱등(선등록 우선 + 경고), 팩토리 지연 인스턴스화 및 캐싱, `SubsystemRegistration`에서 `Reset`, 동일 타입 라우팅 결과는 기본 인스턴스 재사용(이중 인스턴스 방지)
+- 명시적 채널 라우팅: `LoginParams.ChannelId`로 레지스트리 라우팅. 비어 있으면 레지스트리 상호 배제 해결(선등록 채널 우선, 등록 순서가 우선순위). 모듈 슬롯은 핵심 패키지의 `DefaultLoginManager` 포워더가 차지합니다
+- 채널 레지스트리: Register 멱등(선등록 우선 + 경고), 팩토리 지연 인스턴스화 및 캐싱, `SubsystemRegistration`에서 `Reset`, 선등록 채널을 선택하는 상호 배제 해결(채널의 플랫폼 제외는 각 채널 Bootstrap의 매크로 벽으로 보장)
 - UI용 채널 열거: `GetAvailableChannels()`가 채널 ID / 표시 이름 / 가용성 반환
 - 일회성 콜백 편의 오버로드 `Login(onSuccess, onFailed)`(구독 후 즉시 해제)
 
@@ -83,7 +83,7 @@ public class LoginDemo : MonoBehaviour
         //    var login = GameApp.Login;
         var login = GameEntry.GetComponent<LoginComponent>();
 
-        // 통합 이벤트 구독(플랫폼 기본 채널과 라우팅 채널 결과 모두 발생)
+        // 통합 이벤트 구독(상호 배제 해결 기본 채널과 라우팅 채널 결과 모두 발생)
         login.OnLoginSuccess += (sender, e) =>
         {
             // 채널 독립: 서버 검증은 e.Result.Token 사용
@@ -91,7 +91,7 @@ public class LoginDemo : MonoBehaviour
         };
         login.OnLoginFailed += (sender, e) => Debug.LogWarning($"로그인 실패 channel={e.ChannelId} error={e.ErrorMessage}");
 
-        // 2) 플랫폼 기본 채널 초기화(채널 설정은 채널 패키지가 직접 읽음)
+        // 2) 기본 채널 초기화(상호 배제 해결. 채널 설정은 채널 패키지가 직접 읽음)
         login.Init();
 
         // 3a) 일회성 콜백 오버로드(구독 후 즉시 해제)
@@ -99,8 +99,8 @@ public class LoginDemo : MonoBehaviour
             result => Debug.Log($"로그인 성공 token={result.Token}"),
             error => Debug.LogWarning($"로그인 실패: {error}"));
 
-        // 3b) 명시적 라우팅: ChannelId가 비어 있으면 플랫폼 기본, "Google"이면 레지스트리 라우팅
-        login.Login(new LoginParams());                    // 플랫폼 기본 채널
+        // 3b) 명시적 라우팅: ChannelId가 비어 있으면 상호 배제 해결 기본, "Google"이면 레지스트리 라우팅
+        login.Login(new LoginParams());                    // 기본 채널(상호 배제 해결)
         login.Login(new LoginParams("Google"));            // 명시적 채널 라우팅
 
         // 4) 사용 가능한 채널 열거(로그인 UI 병렬 표시)
@@ -116,23 +116,23 @@ public class LoginDemo : MonoBehaviour
 
 ### `Init()`
 
-플랫폼 기본 로그인 채널을 초기화합니다. 채널 설정은 채널 패키지가 직접 읽습니다.
+로그인 채널을 초기화합니다(레지스트리에서 해결된 관리자로 전달). 채널 설정은 채널 패키지가 직접 읽습니다.
 
 ### `IsReady()`
 
-플랫폼 기본 로그인 채널 준비 여부.
+로그인 채널 준비 여부(레지스트리에서 해결된 관리자로 전달).
 
 ### `Login(LoginParams loginParams)`
 
-로그인을 실행합니다. `ChannelId`가 비어 있으면 플랫폼 기본 관리자로, 비어 있지 않으면 `LoginChannelRegistry`로 라우팅합니다(미등록 채널은 경고 후 no-op). 결과는 통합된 `OnLoginSuccess` / `OnLoginFailed` 이벤트로 발생합니다.
+로그인을 실행합니다. `ChannelId`가 비어 있으면 레지스트리 상호 배제 해결(등록 순서가 우선순위). 비어 있지 않으면 `LoginChannelRegistry`로 라우팅합니다(미등록 채널은 경고 후 no-op). 결과는 통합된 `OnLoginSuccess` / `OnLoginFailed` 이벤트로 발생합니다.
 
 ### `Login(Action<LoginResult> onSuccess, Action<string> onFailed)`
 
-플랫폼 기본 채널용 일회성 콜백 편의 오버로드(구독 후 즉시 해제).
+기본 채널용 일회성 콜백 편의 오버로드(구독 후 즉시 해제).
 
 ### `Logout()`
 
-플랫폼 기본 채널에서 로그아웃합니다.
+로그아웃합니다(레지스트리에서 해결된 관리자로 전달).
 
 ### `GetAvailableChannels()`
 
@@ -150,8 +150,8 @@ public class LoginDemo : MonoBehaviour
 
 ### 채널 레지스트리 토폴로지(v1.0.0)
 
-- 핵심 패키지 `com.gameframex.unity.login`(이 패키지): 계약(`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`) + 레지스트리(`LoginChannelRegistry`) + 유일한 `LoginComponent` 파사드와 `DefaultLoginManager` 폴백.
-- 채널 패키지(예: `com.gameframex.unity.login.google`): `BaseLoginManager` 구현, 각자의 Bootstrap으로 `BeforeSceneLoad`에 자동 등록. package.json은 핵심 패키지만 의존. 설치하지 않은 채널 패키지 코드는 스트리핑되어 등록이 발생하지 않습니다.
+- 핵심 패키지 `com.gameframex.unity.login`(이 패키지): 계약(`ILoginManager` / `LoginResult` / `LoginParams` / `LoginEventArgs`) + 레지스트리(`LoginChannelRegistry`) + 유일한 `LoginComponent` 파사드. 모듈 슬롯은 핵심 패키지의 `DefaultLoginManager`가 차지하며, 호출(Shutdown 포함)과 결과 이벤트를 레지스트리에서 해결된 채널로 전달합니다.
+- 채널 패키지(예: `com.gameframex.unity.login.google`): `BaseLoginManager` 구현, 각자의 Bootstrap으로 `BeforeSceneLoad`에 자동 등록(매크로 벽이 지원 플랫폼을 제한). package.json은 핵심 패키지만 의존. 설치하지 않은 채널 패키지 코드는 스트리핑되어 등록이 발생하지 않습니다.
 - 새 로그인 채널 추가 = 새 채널 패키지 + Bootstrap 자동 등록. entry 패키지는 영구적으로 단일 `GameApp.Login` 접근자만 유지합니다.
 
 ### 채널 지원 표
@@ -165,7 +165,7 @@ public class LoginDemo : MonoBehaviour
 
 | 이전 | 새 |
 |------|-----|
-| `GoogleLoginComponent`(씬 컴포넌트 + Inspector) | `LoginComponent`(유일한 파사드. Google은 Android / iOS 플랫폼 기본) |
+| `GoogleLoginComponent`(씬 컴포넌트 + Inspector) | `LoginComponent`(유일한 파사드. Google은 매크로 벽을 통해 Android / iOS 기본 채널로 등록) |
 | `GameApp.GoogleLogin` | `GameApp.Login`(정의 `ENABLE_GAME_FRAME_X_GOOGLE_LOGIN` -> `ENABLE_GAME_FRAME_X_LOGIN`) |
 | `IGoogleLoginManager` | `ILoginManager` / `BaseLoginManager` |
 | `GoogleLoginSuccess`(`IdToken` 포함) | `GoogleLoginResult : LoginResult`(IdToken은 `Token`으로 통합) |
@@ -178,7 +178,7 @@ public class LoginDemo : MonoBehaviour
 | Android | 지원(채널 패키지) |
 | iOS | 지원(채널 패키지) |
 | Editor | 지원(채널 패키지 스텁) |
-| WebGL / PC / macOS | 폴백(`DefaultLoginManager`) |
+| WebGL / PC / macOS | 등록된 채널 없음: 경고 후 no-op(`DefaultLoginManager`가 해결할 채널이 없음) |
 
 ## 문서 및 자료
 
