@@ -1,0 +1,18 @@
+{
+    "name": "GameFrameX.Login.Tests",
+    "rootNamespace": "GameFrameX.Login.Tests",
+    "references": [
+        "GameFrameX.Login.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

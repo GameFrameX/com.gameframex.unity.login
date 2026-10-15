@@ -1,0 +1,37 @@
+{
+    "name": "com.gameframex.unity.login",
+    "displayName": "Game Frame X Login",
+    "category": "Game Framework X",
+    "description": "独立游戏前后端一体化解决方案,独立游戏开发者的圆梦大使。\n文档地址: https://gameframex.doc.alianblank.com \n Game Frame X Login 登录渠道注册表核心包。",
+    "version": "1.0.0",
+    "unity": "2019.4",
+    "keywords": [
+        "Game Framework X",
+        "Login"
+    ],
+    "repository": {
+        "name": "com.gameframex.unity.login",
+        "url": "git+https://github.com/gameframex/com.gameframex.unity.login.git",
+        "type": "git"
+    },
+    "author": {
+        "name": "Blank",
+        "email": "alianblank@outlook.com",
+        "url": "https://gameframex.doc.alianblank.com"
+    },
+    "dependencies": {
+        "com.gameframex.unity": "2.5.4"
+    },
+    "devDependencies": {
+        "semantic-release": "^24.2.0",
+        "@semantic-release/changelog": "^6.0.3",
+        "@semantic-release/git": "^10.0.1"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://npm.cnb.cool/GameFrameX/npm/-/packages/"
+    },
+    "documentationUrl": "https://gameframex.doc.alianblank.com",
+    "changelogUrl": "https://github.com/gameframex/com.gameframex.unity.login/blob/main/CHANGELOG.md",
+    "licensesUrl": "https://github.com/gameframex/com.gameframex.unity.login/blob/main/LICENSE.md"
+}
