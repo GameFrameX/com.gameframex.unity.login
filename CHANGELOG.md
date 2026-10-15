@@ -1,3 +1,11 @@
+# 1.0.0 (2026-10-15)
+
+
+### Features
+
+* **login:** 平台默认管理器改为注册表互斥解析 ([4a0aa08](https://github.com/gameframex/com.gameframex.unity.login/commit/4a0aa082eff488ccd5bc5d68975f6d4e88151be6))
+* **login:** 新增登录渠道注册表核心包 1.0.0 ([83e4c7c](https://github.com/gameframex/com.gameframex.unity.login/commit/83e4c7cc5c55c17d60286dc3422659aa9087bc1d))
+
 # [1.0.0](https://github.com/gameframex/com.gameframex.unity.login/compare/0.0.0...1.0.0) (2026-10-15)
 
 
