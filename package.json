@@ -3,7 +3,7 @@
     "displayName": "Game Frame X Login",
     "category": "Game Framework X",
     "description": "GameFrameX Login — core package of the GameFrameX login channel registry. Defines the channel-agnostic ILoginManager contract, the unified LoginResult base class (ChannelId / OpenId / Token / DisplayName / PhotoUrl / Raw), LoginChannelRegistry for channel packages that self-register via their Bootstrap, and the single LoginComponent facade. The module slot is occupied by the core-package DefaultLoginManager forwarder, which forwards calls (incl. Shutdown) and aggregated OnLoginSuccess / OnLoginFailed events to the registry-resolved channel; supports explicit channel routing, mutual-exclusion resolution (first registered channel wins), channel enumeration for UI, and one-shot callback login overloads. Docs: https://gameframex.doc.alianblank.com\n\nGameFrameX Login — GameFrameX 登录渠道注册表核心功能包。定义渠道无关的 ILoginManager 契约、统一结果基类 LoginResult（ChannelId / OpenId / Token / DisplayName / PhotoUrl / Raw）、供渠道包经各自 Bootstrap 自注册的 LoginChannelRegistry，以及唯一的 LoginComponent 门面组件。模块槽位由主包 DefaultLoginManager 转发占据，把调用（含 Shutdown）与聚合的 OnLoginSuccess / OnLoginFailed 事件转发给注册表解析到的渠道；支持显式渠道路由、互斥解析（注册顺序即优先级）、面向 UI 的渠道枚举，以及一次性回调登录重载。文档：https://gameframex.doc.alianblank.com",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "unity": "2019.4",
     "keywords": [
         "Game Framework X",

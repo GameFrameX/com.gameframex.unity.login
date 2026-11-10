@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/gameframex/com.gameframex.unity.login/compare/1.0.0...1.0.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **login:** 添加完整 link.xml 防代码裁剪保护 ([e061092](https://github.com/gameframex/com.gameframex.unity.login/commit/e061092577fa3269cbe9e4667f4953d5fde5df60))
+
 # 1.0.0 (2026-10-15)
 
 
